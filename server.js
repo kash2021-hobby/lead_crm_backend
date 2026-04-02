@@ -87,10 +87,23 @@ const normalizeData = (rows) => {
 };
 
 // --- GOOGLE SHEETS & CRON ---
-const auth = new google.auth.GoogleAuth({
-  keyFile: './google-credentials.json',
+
+let authOptions = {
   scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-});
+};
+
+// Railway Deployment Fix: Use Environment Variable if it exists, otherwise use local file
+if (process.env.GOOGLE_CREDENTIALS) {
+  try {
+    authOptions.credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+  } catch (err) {
+    logError("Failed to parse GOOGLE_CREDENTIALS environment variable. Make sure it is valid JSON.", err);
+  }
+} else {
+  authOptions.keyFile = './google-credentials.json';
+}
+
+const auth = new google.auth.GoogleAuth(authOptions);
 const sheets = google.sheets({ version: 'v4', auth });
 
 const fetchAndSyncLeads = async () => {
@@ -107,7 +120,7 @@ const fetchAndSyncLeads = async () => {
         }
       }
     }
-  } catch (dbErr) { logError("Database error", dbErr); }
+  } catch (dbErr) { logError("Database/Sheets error during sync", dbErr); }
 };
 
 const checkReminders = async () => {
@@ -189,13 +202,10 @@ app.post('/api/campaigns', authenticateToken, async (req, res) => {
   catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// NEW DELETE CAMPAIGN ROUTE
 app.delete('/api/campaigns/:id', authenticateToken, async (req, res) => {
   try {
     const campaignId = req.params.id;
-    // Delete all leads associated with this campaign (Activities are deleted automatically via CASCADE)
     await Lead.destroy({ where: { campaign_id: campaignId } });
-    // Delete the campaign itself
     await Campaign.destroy({ where: { id: campaignId } });
     res.json({ success: true, message: 'Campaign deleted successfully' });
   } catch (error) {
